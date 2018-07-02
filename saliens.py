@@ -18,6 +18,8 @@ s.headers.update({
 
 
 def steam64_to_steam3(commid):
+    if commid == "":
+        return commid
     steamid64ident = 76561197960265728
     steamidacct = int(commid) - steamid64ident
     return steamidacct
@@ -47,7 +49,7 @@ def get_zone():
             if not zone["captured"]:
                 if zone["type"] == 4 and zone["boss_active"] and not zone["captured"]:
                     valid += [(zone["type"], zone["zone_position"], zone["difficulty"], planet["id"], planet["state"]["name"], True)]
-                if zone["type"] == 3 and zone["capture_progress"] < 0.9 and zone["capture_progress"] != 0:
+                if zone["type"] == 3 and "capture_progress" in zone and zone["capture_progress"] < 0.9 and zone["capture_progress"] != 0:
                     valid += [(zone["type"], zone["zone_position"], zone["difficulty"], planet["id"], planet["state"]["name"],  False)]
     return sorted(valid, key = lambda x: (x[0], x[2]), reverse=True)[0]
 
@@ -135,16 +137,22 @@ def report_score(difficulty):
         play_game()
     else:
         res = result.json()["response"]
-        score_delta = int(res["next_level_score"]) - int(res["new_score"])
-        eta_seconds = int(score_delta // score) * 110
-        d = datetime.timedelta(seconds=eta_seconds)
-        print("Level: {} | Score: {} -> {} | Level-Up Score: {} ETA: {} {}\n".format(
-            res["new_level"],
-            res["old_score"],
-            res["new_score"],
-            res["next_level_score"],
-            d,
-            "Level UP!" if res["old_level"] != res["new_level"] else ""))
+        if "next_level_score" not in res:
+            print("Level: {} | Score: {} -> {}".format(
+                res["new_level"],
+                res["old_score"],
+                res["new_score"]))
+        else:
+            score_delta = int(res["next_level_score"]) - int(res["new_score"])
+            eta_seconds = int(score_delta // score) * 110
+            d = datetime.timedelta(seconds=eta_seconds)
+            print("Level: {} | Score: {} -> {} | Level-Up Score: {} ETA: {} {}\n".format(
+                res["new_level"],
+                res["old_score"],
+                res["new_score"],
+                res["next_level_score"],
+                d,
+                "Level UP!" if res["old_level"] != res["new_level"] else ""))
 
 
 def play_boss(zone_position):
@@ -158,33 +166,39 @@ def play_boss(zone_position):
         sleep(10)
         play_game()
     else:
-        heal = 7
+        heal = 24
+        max_retries = 3
         print("Joined boss zone: {}".format(str(zone_position)))
         while 1:
             sleep(5)
             if heal == 0:
                 use_heal = 1
-                heal = 7
+                heal = 24
             else:
                 use_heal = 0
             damage_data = {
                 'access_token': TOKEN,
                 'use_heal_ability': use_heal,
-                'damage_to_boss': 100,
+                'damage_to_boss': 1,
                 'damage_taken': 0
             }   
             result = s.post("https://community.steam-api.com/ITerritoryControlMinigameService/ReportBossDamage/v0001/", data=damage_data)
             if result.status_code != 200 or result.json() == {'response':{}}:
-                print("Report boss score errored... retrying")
+                print("Report boss score errored... retrying")              
+                if max_retries == 0:
+                    break   
+                max_retries = max_retries - 1
                 continue
             res = result.json()["response"]
             if res["waiting_for_players"]:
                 continue
             if res["game_over"]:
                 break
-            print("Boss HP: {}/{} \n".format(
+            print("Boss HP: {}/{} | Lasers: {} | Team Heals: {}\n".format(
                 res["boss_status"]["boss_hp"],
-                res["boss_status"]["boss_max_hp"]))
+                res["boss_status"]["boss_max_hp"],
+                res["num_laser_uses"],
+                res["num_team_heals"]))
             for player in res["boss_status"]["boss_players"]:
                 STEAM3ID = steam64_to_steam3(STEAMID)
                 if player["accountid"] == STEAM3ID or STEAM3ID == "":
@@ -194,7 +208,6 @@ def play_boss(zone_position):
                         player["max_hp"],
                         player["xp_earned"]))
             heal = heal - 1
-
 
 def play_game():
     print("Checking if user is currently on a planet")
